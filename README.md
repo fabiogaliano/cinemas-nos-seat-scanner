@@ -1,32 +1,60 @@
 # Melhor Lugar
 
-Web app that compares live seat availability across Cinemas NOS sessions and recommends a contiguous, centered block for a group.
+Melhor Lugar is a web application for the cinemas of Cinemas NOS. It reads the
+free seats of each show. Then it shows the best block of adjacent seats near the
+center of the room for your group.
 
-## Local development
+## Before you start
 
-```bash
-bun install
-bunx playwright install chromium
-bun run dev
-```
+Install [Bun](https://bun.sh).
 
-Open `http://localhost:5757`. The browser bundle rebuilds when the server starts; rerun after client changes.
+## Installation
+
+1. Install the dependencies:
+
+   ```bash
+   bun install
+   ```
+
+2. Install the Chromium browser:
+
+   ```bash
+   bunx playwright install chromium
+   ```
+
+## Operation
+
+1. Start the development server:
+
+   ```bash
+   bun run dev
+   ```
+
+2. Open `http://localhost:5757` in a browser.
+
+The server makes the client bundle again at each start. If you change the client
+code, start the server again.
 
 ## Commands
 
-```bash
-bun run build       # production client bundle
-bun run typecheck   # TypeScript
-bun run test        # Vitest
-bun run start       # production server
-```
+| Command | Function |
+| --- | --- |
+| `bun run build` | Makes the client bundle for production. |
+| `bun run typecheck` | Examines the TypeScript types. |
+| `bun run test` | Does the tests. |
+| `bun run start` | Starts the production server. |
 
 ## Deployment
 
-`deploy/compose.yaml` runs the app and Chromium behind Traefik. From this repository:
+`deploy/compose.yaml` starts the application and Chromium behind Traefik.
 
-```bash
-./deploy/deploy.sh vps-f
-```
+1. Deploy the application to a host:
 
-Runtime scan artifacts are stored in the `cinemas-data` Docker volume.
+   ```bash
+   ./deploy/deploy.sh <host>
+   ```
+
+2. Optional: set `CLOUDFLARE_API_TOKEN` before step 1. Then the script also
+   removes the data in the Cloudflare cache.
+
+The application keeps the scan data in the `cinemas-data` Docker volume.
