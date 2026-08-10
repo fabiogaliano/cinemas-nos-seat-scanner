@@ -44,17 +44,13 @@ code, start the server again.
 | `bun run test` | Does the tests. |
 | `bun run start` | Starts the production server. |
 
-## Deployment
+## Configuration
 
-`deploy/compose.yaml` starts the application and Chromium behind Traefik.
+The server reads these environment variables:
 
-1. Deploy the application to a host:
-
-   ```bash
-   ./deploy/deploy.sh <host>
-   ```
-
-2. Optional: set `CLOUDFLARE_API_TOKEN` before step 1. Then the script also
-   removes the data in the Cloudflare cache.
-
-The application keeps the scan data in the `cinemas-data` Docker volume.
+| Variable | Function |
+| --- | --- |
+| `PORT` | The port of the server. The default is `5757`. |
+| `CINEMAS_DATA_DIR` | The directory for the scan data. The default is `./data`. |
+| `CINEMAS_PUBLIC_DIR` | The directory of the client bundle. The default is `./dist`. |
+| `NOS_SCAN_CONCURRENCY` | The quantity of parallel ticket flows. The default is `2`. The maximum is `4`. |
