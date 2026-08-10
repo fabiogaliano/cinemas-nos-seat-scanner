@@ -7,6 +7,7 @@ const dataDir = process.env.CINEMAS_DATA_DIR ?? join(import.meta.dir, "../../dat
 const jobs = new Map<string, ScanJob>();
 const controllers = new Map<string, AbortController>();
 const writeQueues = new Map<string, Promise<void>>();
+const waiters = new Map<string, Set<(job: ScanJob) => void>>();
 let queue = Promise.resolve();
 
 async function persist(job: ScanJob) {
@@ -31,6 +32,36 @@ function persistLater(job: ScanJob) {
   void persist(job).catch((error) => console.error("Could not persist scan", error));
 }
 
+function changed(job: ScanJob) {
+  job.revision += 1;
+  const pending = waiters.get(job.id);
+  if (!pending) return;
+  waiters.delete(job.id);
+  for (const resolve of pending) resolve(job);
+}
+
+export function waitForJob(id: string, after: number, signal: AbortSignal) {
+  const job = jobs.get(id);
+  if (signal.aborted) return Promise.resolve(undefined);
+  if (!job || job.revision > after || ["complete", "failed", "cancelled"].includes(job.status)) return Promise.resolve(job);
+  return new Promise<ScanJob | undefined>((resolve) => {
+    const pending = waiters.get(id) ?? new Set();
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = (next: ScanJob | undefined) => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", aborted);
+      pending.delete(finish);
+      if (pending.size === 0) waiters.delete(id);
+      resolve(next);
+    };
+    const aborted = () => finish(undefined);
+    timer = setTimeout(() => finish(jobs.get(id)), 15_000);
+    pending.add(finish);
+    waiters.set(id, pending);
+    signal.addEventListener("abort", aborted, { once: true });
+  });
+}
+
 export async function loadJobs() {
   await mkdir(dataDir, { recursive: true });
   const legacyJobs = (await readdir(dataDir)).filter((file) => /^[a-f0-9-]{36}\.json$/i.test(file));
@@ -47,13 +78,14 @@ export function createJob(request: ScanRequest) {
   const job: ScanJob = {
     id,
     status: "queued",
-    movieTitle: "A preparar…",
+    movieTitle: request.movieTitle,
     request,
     sessions: [],
     total: 0,
     scanned: 0,
     failures: [],
     createdAt: new Date().toISOString(),
+    revision: 0,
   };
   jobs.set(id, job);
   controllers.set(id, controller);
@@ -62,7 +94,8 @@ export function createJob(request: ScanRequest) {
   queue = queue.then(async () => {
     if (controller.signal.aborted) return;
     job.status = "discovering";
-    await persist(job);
+    changed(job);
+    persistLater(job);
     try {
       await scan(request, {
         signal: controller.signal,
@@ -70,6 +103,7 @@ export function createJob(request: ScanRequest) {
           job.movieTitle = movieTitle;
           job.total = total;
           job.status = "scanning";
+          changed(job);
           persistLater(job);
         },
         onSession(session, index, total) {
@@ -77,6 +111,7 @@ export function createJob(request: ScanRequest) {
           job.scanned = index;
           job.total = total;
           job.currentLabel = session.label;
+          changed(job);
           persistLater(job);
         },
         onSessionError(session, index, total, error) {
@@ -84,11 +119,13 @@ export function createJob(request: ScanRequest) {
           job.total = total;
           job.currentLabel = session.label;
           job.failures?.push({ label: session.label, error: error.message });
+          changed(job);
           persistLater(job);
         },
       });
       job.status = "complete";
       job.currentLabel = undefined;
+      changed(job);
     } catch (error) {
       if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
         job.status = "cancelled";
@@ -96,6 +133,7 @@ export function createJob(request: ScanRequest) {
         job.status = "failed";
         job.error = error instanceof Error ? error.message : "O scan falhou.";
       }
+      changed(job);
     } finally {
       controllers.delete(id);
       await unlink(join(dataDir, `${job.id}.json`)).catch(() => undefined);
@@ -111,6 +149,7 @@ export function cancelJob(id: string) {
   if (!job || !controller) return false;
   controller.abort();
   job.status = "cancelled";
+  changed(job);
   persistLater(job);
   return true;
 }

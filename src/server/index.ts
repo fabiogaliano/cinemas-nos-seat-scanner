@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, normalize } from "node:path";
-import { cancelJob, createJob, getJob, loadJobs } from "./jobs";
+import { cancelJob, createJob, loadJobs, waitForJob } from "./jobs";
 import { getMovieCatalog } from "./catalog";
 import { discover } from "./scanner";
 import type { ScanRequest, ScanVariant } from "../shared/types";
@@ -15,8 +15,8 @@ const headers = {
   "X-Frame-Options": "DENY",
 };
 
-function json(payload: unknown, status = 200) {
-  return Response.json(payload, { status, headers });
+function json(payload: unknown, status = 200, cacheControl = "no-store") {
+  return Response.json(payload, { status, headers: { ...headers, "Cache-Control": cacheControl } });
 }
 
 function validateUrl(value: unknown) {
@@ -26,6 +26,12 @@ function validateUrl(value: unknown) {
     throw new Error("Usa um link de filme de www.cinemas.nos.pt.");
   }
   return url.toString();
+}
+
+function validateAggregateId(value: unknown) {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value)) throw new Error("O identificador do filme é inválido.");
+  return value;
 }
 
 function validateScan(value: unknown): ScanRequest {
@@ -42,7 +48,7 @@ function validateScan(value: unknown): ScanRequest {
     if (typeof variant.id !== "string" || typeof variant.label !== "string" || !variant.label.trim()) throw new Error("Versão inválida.");
     const priority = Number(variant.priority);
     if (!Number.isInteger(priority) || priority !== index + 1) throw new Error("A prioridade das versões é inválida.");
-    return { id: variant.id, label: variant.label.trim(), movieUrl: validateUrl(variant.movieUrl), priority };
+    return { id: variant.id, label: variant.label.trim(), movieUrl: validateUrl(variant.movieUrl), aggregateId: validateAggregateId(variant.aggregateId), priority };
   });
   const days = Number(body.days);
   const people = Number(body.people);
@@ -55,10 +61,12 @@ function staticFile(pathname: string) {
   const requested = pathname === "/" ? "index.html" : pathname.slice(1);
   const path = normalize(join(publicDir, requested));
   if (!path.startsWith(publicDir) || !existsSync(path)) return null;
-  return new Response(Bun.file(path), { headers: { ...headers, "Cache-Control": "no-cache" } });
+  const cacheControl = requested === "index.html" ? "no-cache" : /\.(?:css|js)$/.test(requested) ? "public, max-age=31536000, immutable" : "public, max-age=3600";
+  return new Response(Bun.file(path), { headers: { ...headers, "Cache-Control": cacheControl } });
 }
 
 await loadJobs();
+void getMovieCatalog().catch((error) => console.error("Could not warm movie catalog", error));
 
 Bun.serve({
   port,
@@ -69,15 +77,16 @@ Bun.serve({
       if (request.method === "GET" && url.pathname === "/health") return json({ ok: true });
       if (request.method === "GET" && url.pathname === "/api/movies") {
         try {
-          return json(await getMovieCatalog());
+          return json(await getMovieCatalog(), 200, "public, max-age=300, stale-while-revalidate=86400");
         } catch (error) {
           const message = error instanceof Error ? error.message : "Não foi possível carregar os filmes da NOS.";
           return json({ error: message }, 503);
         }
       }
       if (request.method === "POST" && url.pathname === "/api/discover") {
-        const body = await request.json() as { movieUrl?: unknown };
-        return json(await discover(validateUrl(body.movieUrl)));
+        const body = await request.json() as { movieUrl?: unknown; aggregateId?: unknown; movieTitle?: unknown };
+        const movieTitle = typeof body.movieTitle === "string" && body.movieTitle.trim() ? body.movieTitle.trim() : "Filme";
+        return json(await discover(validateUrl(body.movieUrl), validateAggregateId(body.aggregateId), movieTitle));
       }
       if (request.method === "POST" && url.pathname === "/api/scans") {
         const job = createJob(validateScan(await request.json()));
@@ -85,7 +94,8 @@ Bun.serve({
       }
       const jobMatch = url.pathname.match(/^\/api\/scans\/([a-f0-9-]+)$/);
       if (jobMatch && request.method === "GET") {
-        const job = getJob(jobMatch[1]);
+        const after = Math.max(-1, Number(url.searchParams.get("after") ?? -1) || 0);
+        const job = await waitForJob(jobMatch[1], after, request.signal);
         return job ? json(job) : json({ error: "Scan não encontrado." }, 404);
       }
       if (jobMatch && request.method === "DELETE") {

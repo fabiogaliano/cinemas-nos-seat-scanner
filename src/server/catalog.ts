@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { MovieCatalogItem, MovieCatalogResponse, MovieVariant } from "../shared/types";
 
 const DATA_DIR = process.env.CINEMAS_DATA_DIR ?? join(import.meta.dir, "../../data");
-const CACHE_FILE = join(DATA_DIR, "catalog-v1.json");
+const CACHE_FILE = join(DATA_DIR, "catalog-v3.json");
 const NOS_ORIGIN = "https://www.cinemas.nos.pt";
 const CATALOG_URL = `${NOS_ORIGIN}/graphql/execute.json/cinemas/getAllMovies`;
 
@@ -47,8 +47,9 @@ function imageUrl(path: unknown) {
   return `https:${value}`;
 }
 
-function formatLabel(value: string) {
-  return value.toUpperCase();
+function formatLabel(format: string, version: string) {
+  const formatName = format.toUpperCase();
+  return version === "Dob" ? `${formatName} · Em português` : formatName;
 }
 
 function toCatalog(raw: unknown): MovieCatalogItem[] {
@@ -63,29 +64,32 @@ function toCatalog(raw: unknown): MovieCatalogItem[] {
 
     const uuid = string(movie.uuid);
     const url = movieUrl(movie.detailurl);
-    const groupId = string(movie.aggregateformatnumber) || uuid;
+    const aggregateId = string(movie.aggregateformatnumber) || uuid;
     const title = string(movie.title);
-    if (!uuid || !url || !groupId || !title) continue;
+    const originalTitle = string(movie.originaltitle);
+    const releaseDate = string(movie.releasedate) || undefined;
+    if (!uuid || !url || !aggregateId || !title) continue;
 
     const variant: MovieVariant = {
       id: uuid,
-      label: formatLabel(string(movie.format) || "2D"),
+      label: formatLabel(string(movie.format) || "2D", string(movie.version)),
       movieUrl: url,
+      aggregateId,
     };
-    const existing = groups.get(groupId);
+    const groupKey = `${(originalTitle || title).toLocaleLowerCase("pt-PT")}::${releaseDate?.slice(0, 10) ?? ""}`;
+    const existing = groups.get(groupKey);
     if (existing) {
       if (!existing.variants.some((item) => item.id === variant.id)) existing.variants.push(variant);
       continue;
     }
 
-    const releaseDate = string(movie.releasedate) || undefined;
     const runtime = Number(string(movie.duration));
-    groups.set(groupId, {
-      id: groupId,
+    groups.set(groupKey, {
+      id: aggregateId,
       nosMovieUuid: uuid,
       movieUrl: url,
       title,
-      originalTitle: string(movie.originaltitle) || undefined,
+      originalTitle: originalTitle || undefined,
       releaseDate,
       releaseYear: releaseDate ? Number(releaseDate.slice(0, 4)) || undefined : undefined,
       runtimeMinutes: Number.isFinite(runtime) && runtime > 0 ? runtime : undefined,
@@ -105,7 +109,8 @@ function toCatalog(raw: unknown): MovieCatalogItem[] {
 async function readStored() {
   try {
     const stored = JSON.parse(await readFile(CACHE_FILE, "utf8")) as StoredCatalog;
-    if (stored?.day && Array.isArray(stored.movies) && typeof stored.fetchedAt === "string") return stored;
+    const hasAggregateIds = stored?.movies?.every((movie) => movie.variants.length > 0 && movie.variants.every((variant) => typeof variant.aggregateId === "string"));
+    if (stored?.day && Array.isArray(stored.movies) && typeof stored.fetchedAt === "string" && hasAggregateIds) return stored;
   } catch {
     // A missing or incomplete cache must not prevent a fresh source request.
   }
@@ -136,5 +141,9 @@ export async function getMovieCatalog(): Promise<MovieCatalogResponse> {
   if (!memory) memory = await readStored();
   if (memory?.day === day) return memory;
   if (!pending) pending = refresh(day).finally(() => { pending = null; });
+  if (memory) {
+    void pending.catch((error) => console.error("Could not refresh movie catalog", error));
+    return { ...memory, stale: true };
+  }
   return pending;
 }

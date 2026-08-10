@@ -25,6 +25,7 @@ export type MovieVariant = {
   id: string;
   label: string;
   movieUrl: string;
+  aggregateId?: string;
 };
 
 export type MovieCatalogItem = {
@@ -46,7 +47,7 @@ export type MovieCatalogItem = {
 export type MovieCatalogResponse = {
   movies: MovieCatalogItem[];
   fetchedAt: string;
-  stale: false;
+  stale: boolean;
   source: "cinemas-nos";
 };
 
@@ -84,6 +85,7 @@ export type ScanJob = {
   error?: string;
   failures?: Array<{ label: string; error: string }>;
   createdAt: string;
+  revision: number;
 };
 
 export type BestBlock = {
