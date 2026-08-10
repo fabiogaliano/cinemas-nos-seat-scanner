@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "bun scripts/build.ts",
+    "deploy": "deploy/deploy.sh",
     "dev": "bun run build && bun --watch src/server/index.ts",
     "start": "bun src/server/index.ts",
     "test": "vitest run",
