@@ -1,6 +1,6 @@
 import { render } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { rankSessions } from "../shared/ranking";
+import { rankSessions, rowDesirability } from "../shared/ranking";
 import type { Discovery, MovieCatalogItem, MovieCatalogResponse, MovieVariant, RankedSession, ScanJob, ScanRequest, SeatRow } from "../shared/types";
 import "./styles.css";
 
@@ -102,7 +102,10 @@ function Results({ job, onNew }: { job: ScanJob; onNew: () => void }) {
   const ranked = useMemo(() => {
     const groups = new Map<number, typeof job.sessions>();
     for (const session of job.sessions) groups.set(session.variantPriority, [...(groups.get(session.variantPriority) ?? []), session]);
-    return [...groups.entries()].sort(([a], [b]) => a - b).flatMap(([, sessions]) => rankSessions(sessions, partySize));
+    // Pool the crowd signal across every variant: a tier with one session has no
+    // usable relative statistics on its own.
+    const desirability = rowDesirability(job.sessions);
+    return [...groups.entries()].sort(([a], [b]) => a - b).flatMap(([, sessions]) => rankSessions(sessions, partySize, desirability));
   }, [job.sessions, partySize]);
   const filtered = ranked.filter((session) => cinemas.has(session.cinema) && (dates.size === 0 || dates.has(session.date)));
   const [selectedId, setSelectedId] = useState(ranked[0]?.uuid ?? "");
