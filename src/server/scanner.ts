@@ -42,11 +42,20 @@ function assertAggregateId(value: string) {
   return value;
 }
 
-async function fetchSchedule(aggregateId: string) {
+export async function fetchSchedule(aggregateId: string, { fresh = false }: { fresh?: boolean } = {}) {
   const id = assertAggregateId(aggregateId);
-  const response = await fetch(`${NOS_ORIGIN}/bin/cinemas/render/getMovieSessions.getMovieSessionsAggregator.json?aggregateMovieId=${id}`, {
+  // The CDN serves this well past its own max-age — a plain request was
+  // measured at age=534s on a 300s policy, so the data can be ~9 minutes stale.
+  // The aggregator ignores unknown query parameters, so an unused one changes
+  // nothing about the response but does miss the edge cache and reach origin.
+  // Only worth it when latency to a newly published date actually matters;
+  // ordinary scans should keep taking the cached copy.
+  const bust = fresh ? `&_=${Date.now()}` : "";
+  // Origin is enormously slower than the edge — measured 12.1s against 0.06s —
+  // so the cached path's 12s budget guarantees a timeout on every fresh read.
+  const response = await fetch(`${NOS_ORIGIN}/bin/cinemas/render/getMovieSessions.getMovieSessionsAggregator.json?aggregateMovieId=${id}${bust}`, {
     headers: { Accept: "application/json" },
-    signal: AbortSignal.timeout(12_000),
+    signal: AbortSignal.timeout(fresh ? 30_000 : 12_000),
   });
   if (!response.ok) throw new Error("Não foi possível carregar as sessões da NOS.");
   const text = new TextDecoder("windows-1252").decode(await response.arrayBuffer());

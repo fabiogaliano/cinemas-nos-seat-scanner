@@ -13,5 +13,5 @@
     "allowImportingTsExtensions": true,
     "allowArbitraryExtensions": true
   },
-  "include": ["src", "scripts", "tests"]
+  "include": ["src", "scripts", "tests", "autobuy"]
 }

@@ -26,7 +26,18 @@ export function rowDesirability(sessions: Session[]) {
   return new Map([...stats].map(([row, value]) => [row, value.delta / value.samples]));
 }
 
-export function bestBlock(rows: SeatRow[], partySize: number, desirability = new Map<number, number>()): BestBlock | null {
+// Sitting beside a stranger is worth avoiding for some films and irrelevant for
+// others, so the weight is a knob rather than a constant. At 0.15 it outweighs
+// roughly three seats of centering, which is why turning it off visibly pulls
+// picks back towards the middle.
+export const STRANGER_PENALTY = 0.15;
+
+export function bestBlock(
+  rows: SeatRow[],
+  partySize: number,
+  desirability = new Map<number, number>(),
+  { strangerPenalty = STRANGER_PENALTY }: { strangerPenalty?: number } = {},
+): BestBlock | null {
   let best: BestBlock | null = null;
   const lastRow = rows.length - 1;
   rows.forEach((row, rowIndex) => {
@@ -57,7 +68,7 @@ export function bestBlock(rows: SeatRow[], partySize: number, desirability = new
         depthScore * 1.2 +
         centered +
         (desirability.get(row.row) ?? 0) * 0.8 -
-        strangers * 0.15;
+        strangers * strangerPenalty;
       if (!best || score > best.score) {
         best = {
           row: row.row,
@@ -75,6 +86,7 @@ export function rankSessions(
   sessions: Session[],
   partySize: number,
   desirability = rowDesirability(sessions),
+  options: { strangerPenalty?: number } = {},
 ): RankedSession[] {
   return sessions
     .map((session) => {
@@ -83,7 +95,7 @@ export function rankSessions(
       const [hours, minutes] = session.time.split(":").map(Number);
       return {
         ...session,
-        best: bestBlock(session.rows, partySize, desirability),
+        best: bestBlock(session.rows, partySize, desirability, options),
         totalSeats,
         totalFree,
         minutes: hours * 60 + minutes,
