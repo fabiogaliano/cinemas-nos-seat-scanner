@@ -2,9 +2,6 @@ node_modules/
 dist/
 .env
 .env.local
-# Private ticket auto-buyer; not part of the public app.
-autobuy/
-.env.example
 .claude/
 deploy/
 data/
